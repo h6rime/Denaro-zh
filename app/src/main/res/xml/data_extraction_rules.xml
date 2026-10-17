@@ -1,0 +1,55 @@
+<?xml version="1.0" encoding="utf-8"?>
+<data-extraction-rules>
+    <cloud-backup>
+        <exclude
+            domain="database"
+            path="denaro_native.db" />
+        <exclude
+            domain="database"
+            path="denaro_native.db-wal" />
+        <exclude
+            domain="database"
+            path="denaro_native.db-shm" />
+        <exclude
+            domain="file"
+            path="SQLite/denaro.db" />
+        <exclude
+            domain="file"
+            path="SQLite/denaro.db-wal" />
+        <exclude
+            domain="file"
+            path="SQLite/denaro.db-shm" />
+        <exclude
+            domain="sharedpref"
+            path="SecureStore.xml" />
+        <exclude
+            domain="sharedpref"
+            path="denaro_security_preferences.xml" />
+    </cloud-backup>
+    <device-transfer>
+        <exclude
+            domain="database"
+            path="denaro_native.db" />
+        <exclude
+            domain="database"
+            path="denaro_native.db-wal" />
+        <exclude
+            domain="database"
+            path="denaro_native.db-shm" />
+        <exclude
+            domain="file"
+            path="SQLite/denaro.db" />
+        <exclude
+            domain="file"
+            path="SQLite/denaro.db-wal" />
+        <exclude
+            domain="file"
+            path="SQLite/denaro.db-shm" />
+        <exclude
+            domain="sharedpref"
+            path="SecureStore.xml" />
+        <exclude
+            domain="sharedpref"
+            path="denaro_security_preferences.xml" />
+    </device-transfer>
+</data-extraction-rules>

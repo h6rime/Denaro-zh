@@ -1,0 +1,874 @@
+package it.rfmariano.denaro.data.local
+
+import androidx.paging.PagingSource
+import androidx.room.Dao
+import androidx.room.Delete
+import androidx.room.Insert
+import androidx.room.OnConflictStrategy
+import androidx.room.Query
+import androidx.room.Update
+import kotlinx.coroutines.flow.Flow
+
+@Dao
+interface AccountDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(account: AccountEntity)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAll(accounts: List<AccountEntity>)
+
+    @Query("SELECT * FROM accounts ORDER BY created_at, id")
+    fun observeAll(): Flow<List<AccountEntity>>
+
+    @Query(
+        """
+        SELECT * FROM accounts
+        WHERE archived_at IS NULL
+        ORDER BY name COLLATE NOCASE, created_at, id
+        """,
+    )
+    fun observeActive(): Flow<List<AccountEntity>>
+
+    @Query(ACCOUNT_WITH_BALANCE_QUERY + " WHERE accounts.archived_at IS NULL ORDER BY accounts.name COLLATE NOCASE, accounts.created_at, accounts.id")
+    fun observeActiveWithBalance(): Flow<List<AccountWithBalance>>
+
+    @Query(ACCOUNT_WITH_BALANCE_QUERY + " ORDER BY accounts.created_at, accounts.id")
+    fun observeAllWithBalance(): Flow<List<AccountWithBalance>>
+
+    @Query(ACCOUNT_WITH_BALANCE_QUERY + " WHERE accounts.id = :id")
+    fun observeByIdWithBalance(id: String): Flow<AccountWithBalance?>
+
+    @Query("SELECT * FROM accounts WHERE id = :id")
+    fun observeById(id: String): Flow<AccountEntity?>
+
+    @Query("SELECT * FROM accounts WHERE id = :id")
+    suspend fun getById(id: String): AccountEntity?
+
+    @Query("SELECT * FROM accounts ORDER BY created_at, id")
+    suspend fun getAll(): List<AccountEntity>
+
+    @Query(
+        """
+        SELECT fraction_digits FROM accounts
+        WHERE currency = :currency
+        ORDER BY created_at, id
+        LIMIT 1
+        """,
+    )
+    suspend fun getFractionDigitsForCurrency(currency: String): Int?
+
+    @Update
+    suspend fun update(account: AccountEntity)
+
+    @Query("UPDATE accounts SET archived_at = :archivedAt, updated_at = :updatedAt WHERE id = :id")
+    suspend fun setArchived(id: String, archivedAt: Long?, updatedAt: Long)
+
+    @Query("SELECT COUNT(*) FROM accounts")
+    suspend fun count(): Int
+
+    @Query("DELETE FROM accounts WHERE id = :id")
+    suspend fun deleteById(id: String)
+
+}
+
+@Dao
+interface CategoryDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(category: CategoryEntity)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAll(categories: List<CategoryEntity>)
+
+    @Query(
+        """
+        SELECT * FROM categories
+        ORDER BY type, parent_id IS NOT NULL, name COLLATE NOCASE, created_at, id
+        """,
+    )
+    fun observeAll(): Flow<List<CategoryEntity>>
+
+    @Query("SELECT * FROM categories ORDER BY type, name COLLATE NOCASE")
+    suspend fun getAll(): List<CategoryEntity>
+
+    @Query("SELECT * FROM categories WHERE id = :id")
+    suspend fun getById(id: String): CategoryEntity?
+
+    @Update
+    suspend fun update(category: CategoryEntity)
+
+    @Query(
+        """
+        UPDATE categories
+        SET color_index = :colorIndex,
+            updated_at = :updatedAt
+        WHERE parent_id = :parentId
+        """,
+    )
+    suspend fun updateChildrenColor(parentId: String, colorIndex: Int, updatedAt: Long)
+
+    @Query(
+        """
+        UPDATE categories
+        SET archived_at = :archivedAt,
+            archived_by_parent_id = NULL,
+            updated_at = :updatedAt
+        WHERE id = :id
+        """,
+    )
+    suspend fun setArchived(id: String, archivedAt: Long?, updatedAt: Long)
+
+    @Query(
+        """
+        UPDATE categories
+        SET archived_at = :archivedAt,
+            archived_by_parent_id = :parentId,
+            updated_at = :updatedAt
+        WHERE parent_id = :parentId AND archived_at IS NULL
+        """,
+    )
+    suspend fun archiveActiveChildren(parentId: String, archivedAt: Long, updatedAt: Long)
+
+    @Query(
+        """
+        UPDATE categories
+        SET archived_at = NULL,
+            archived_by_parent_id = NULL,
+            updated_at = :updatedAt
+        WHERE archived_by_parent_id = :parentId
+        """,
+    )
+    suspend fun restoreChildrenArchivedByParent(parentId: String, updatedAt: Long)
+
+    @Query("SELECT COUNT(*) FROM categories")
+    suspend fun count(): Int
+}
+
+@Dao
+interface TransactionDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(transaction: TransactionEntity)
+
+    @Insert(onConflict = OnConflictStrategy.IGNORE)
+    suspend fun insertIfAbsent(transaction: TransactionEntity): Long
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAll(transactions: List<TransactionEntity>)
+
+    @Query("SELECT * FROM transactions ORDER BY occurred_at DESC, id DESC")
+    fun observeAll(): Flow<List<TransactionEntity>>
+
+    @Query("SELECT * FROM transactions WHERE id = :id")
+    suspend fun getById(id: String): TransactionEntity?
+
+    @Query(
+        """
+        SELECT transactions.account_id
+        FROM transactions
+        JOIN accounts ON accounts.id = transactions.account_id
+        WHERE transactions.type = :type
+          AND transactions.recurring_rule_id IS NULL
+          AND accounts.archived_at IS NULL
+        GROUP BY transactions.account_id
+        ORDER BY COUNT(*) DESC,
+                 MAX(transactions.occurred_at) DESC,
+                 accounts.name COLLATE NOCASE,
+                 transactions.account_id
+        LIMIT 1
+        """,
+    )
+    suspend fun getPreferredAccountId(type: TransactionType): String?
+
+    @Update
+    suspend fun update(transaction: TransactionEntity)
+
+    @Delete
+    suspend fun delete(transaction: TransactionEntity)
+
+    @Query("DELETE FROM transactions WHERE account_id = :accountId")
+    suspend fun deleteForAccount(accountId: String)
+
+    @Query("SELECT COUNT(*) FROM transactions")
+    suspend fun count(): Int
+
+}
+
+@Dao
+interface BalanceAdjustmentDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(adjustment: BalanceAdjustmentEntity)
+
+    @Query("SELECT * FROM balance_adjustments WHERE id = :id")
+    fun observeById(id: String): Flow<BalanceAdjustmentEntity?>
+
+    @Query("SELECT * FROM balance_adjustments WHERE id = :id")
+    suspend fun getById(id: String): BalanceAdjustmentEntity?
+
+    @Delete
+    suspend fun delete(adjustment: BalanceAdjustmentEntity)
+
+    @Query("DELETE FROM balance_adjustments WHERE account_id = :accountId")
+    suspend fun deleteForAccount(accountId: String)
+}
+
+@Dao
+interface RecurringRuleDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(rule: RecurringRuleEntity)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAll(rules: List<RecurringRuleEntity>)
+
+    @Query("SELECT * FROM recurring_rules WHERE id = :id")
+    suspend fun getById(id: String): RecurringRuleEntity?
+
+    @Query(
+        """
+        SELECT * FROM recurring_rules
+        WHERE is_active = 1
+        ORDER BY next_occurrence_at, id
+        """,
+    )
+    fun observeActive(): Flow<List<RecurringRuleEntity>>
+
+    @Query(
+        """
+        SELECT * FROM recurring_rules
+        WHERE account_id = :accountId
+        ORDER BY is_active DESC, next_occurrence_at, id
+        """,
+    )
+    fun observeForAccount(accountId: String): Flow<List<RecurringRuleEntity>>
+
+    @Query(
+        """
+        SELECT * FROM recurring_rules
+        WHERE is_active = 1 AND next_occurrence_at <= :now
+        ORDER BY next_occurrence_at, id
+        """,
+    )
+    suspend fun getDue(now: Long): List<RecurringRuleEntity>
+
+    @Update
+    suspend fun update(rule: RecurringRuleEntity)
+
+    @Delete
+    suspend fun delete(rule: RecurringRuleEntity)
+
+    @Query(
+        """
+        UPDATE recurring_rules
+        SET is_active = 0, updated_at = :updatedAt
+        WHERE account_id = :accountId AND is_active = 1
+        """,
+    )
+    suspend fun deactivateForAccount(accountId: String, updatedAt: Long)
+
+    @Query("DELETE FROM recurring_rules WHERE account_id = :accountId")
+    suspend fun deleteForAccount(accountId: String)
+
+    @Query("SELECT COUNT(*) FROM recurring_rules")
+    suspend fun count(): Int
+
+}
+
+@Dao
+interface TransferDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(transfer: TransferEntity)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertAll(transfers: List<TransferEntity>)
+
+    @Query("SELECT * FROM transfers ORDER BY occurred_at DESC, id DESC")
+    fun observeAll(): Flow<List<TransferEntity>>
+
+    @Query("SELECT * FROM transfers WHERE id = :id")
+    suspend fun getById(id: String): TransferEntity?
+
+    @Query(
+        """
+        SELECT from_account_id AS fromAccountId,
+               to_account_id AS toAccountId,
+               COUNT(*) AS transferCount,
+               MAX(occurred_at) AS lastOccurredAt
+        FROM transfers
+        GROUP BY from_account_id, to_account_id
+        """,
+    )
+    suspend fun getPairUsage(): List<TransferPairUsage>
+
+    @Update
+    suspend fun update(transfer: TransferEntity)
+
+    @Delete
+    suspend fun delete(transfer: TransferEntity)
+
+    @Query(
+        """
+        DELETE FROM transfers
+        WHERE from_account_id = :accountId OR to_account_id = :accountId
+        """,
+    )
+    suspend fun deleteForAccount(accountId: String)
+
+    @Query("SELECT COUNT(*) FROM transfers")
+    suspend fun count(): Int
+
+}
+
+@Dao
+interface CounterpartyDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(counterparty: CounterpartyEntity)
+
+    @Query("SELECT * FROM counterparties ORDER BY archived_at IS NOT NULL, name COLLATE NOCASE, created_at")
+    fun observeAll(): Flow<List<CounterpartyEntity>>
+
+    @Query("SELECT * FROM counterparties WHERE id = :id")
+    suspend fun getById(id: String): CounterpartyEntity?
+
+    @Query("SELECT * FROM counterparties ORDER BY created_at, id")
+    suspend fun getAll(): List<CounterpartyEntity>
+
+    @Update
+    suspend fun update(counterparty: CounterpartyEntity)
+
+    @Query("UPDATE counterparties SET archived_at = :archivedAt, updated_at = :updatedAt WHERE id = :id")
+    suspend fun setArchived(id: String, archivedAt: Long?, updatedAt: Long)
+}
+
+data class DebtRecord(
+    val id: String,
+    val counterpartyId: String,
+    val counterpartyName: String,
+    val accountId: String,
+    val accountName: String,
+    val direction: DebtDirection,
+    val principalMinor: Long,
+    val repaidMinor: Long,
+    val currency: String,
+    val fractionDigits: Int,
+    val openedAt: Long,
+    val localDate: String,
+    val dueDate: String?,
+    val note: String?,
+    val createdAt: Long,
+    val updatedAt: Long,
+)
+
+data class DebtEntryDefaultsRecord(
+    val accountId: String,
+    val counterpartyId: String,
+)
+
+@Dao
+interface DebtDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(debt: DebtEntity)
+
+    @Query("SELECT * FROM debts WHERE id = :id")
+    suspend fun getById(id: String): DebtEntity?
+
+    @Query(
+        """
+        SELECT debts.account_id AS accountId,
+               debts.counterparty_id AS counterpartyId
+        FROM debts
+        JOIN accounts ON accounts.id = debts.account_id
+        JOIN counterparties ON counterparties.id = debts.counterparty_id
+        WHERE debts.direction = :direction
+          AND accounts.archived_at IS NULL
+          AND counterparties.archived_at IS NULL
+        GROUP BY debts.account_id, debts.counterparty_id
+        ORDER BY COUNT(*) DESC,
+                 MAX(debts.opened_at) DESC,
+                 accounts.name COLLATE NOCASE,
+                 counterparties.name COLLATE NOCASE,
+                 debts.account_id,
+                 debts.counterparty_id
+        LIMIT 1
+        """,
+    )
+    suspend fun getPreferredEntryDefaults(direction: DebtDirection): DebtEntryDefaultsRecord?
+
+    @Update
+    suspend fun update(debt: DebtEntity)
+
+    @Delete
+    suspend fun delete(debt: DebtEntity)
+
+    @Query("DELETE FROM debts WHERE account_id = :accountId")
+    suspend fun deleteForAccount(accountId: String)
+
+    @Query("UPDATE debts SET updated_at = :updatedAt WHERE id = :id")
+    suspend fun touch(id: String, updatedAt: Long)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertRepayment(repayment: DebtRepaymentEntity)
+
+    @Query("SELECT * FROM debt_repayments WHERE id = :id")
+    suspend fun getRepaymentById(id: String): DebtRepaymentEntity?
+
+    @Query("SELECT * FROM debt_repayments WHERE debt_id = :debtId ORDER BY occurred_at DESC, id DESC")
+    fun observeRepayments(debtId: String): Flow<List<DebtRepaymentEntity>>
+
+    @Query("SELECT * FROM debt_repayments WHERE debt_id = :debtId ORDER BY occurred_at DESC, id DESC")
+    suspend fun getRepayments(debtId: String): List<DebtRepaymentEntity>
+
+    @Update
+    suspend fun updateRepayment(repayment: DebtRepaymentEntity)
+
+    @Delete
+    suspend fun deleteRepayment(repayment: DebtRepaymentEntity)
+
+    @Query("DELETE FROM debt_repayments WHERE account_id = :accountId")
+    suspend fun deleteRepaymentsForAccount(accountId: String)
+
+    @Query(
+        """
+        SELECT debts.id AS id,
+               debts.counterparty_id AS counterpartyId,
+               counterparties.name AS counterpartyName,
+               debts.account_id AS accountId,
+               accounts.name AS accountName,
+               debts.direction AS direction,
+               debts.principal_minor AS principalMinor,
+               COALESCE(SUM(debt_repayments.amount_minor), 0) AS repaidMinor,
+               debts.currency AS currency,
+               accounts.fraction_digits AS fractionDigits,
+               debts.opened_at AS openedAt,
+               debts.local_date AS localDate,
+               debts.due_date AS dueDate,
+               debts.note AS note,
+               debts.created_at AS createdAt,
+               debts.updated_at AS updatedAt
+        FROM debts
+        JOIN counterparties ON counterparties.id = debts.counterparty_id
+        JOIN accounts ON accounts.id = debts.account_id
+        LEFT JOIN debt_repayments ON debt_repayments.debt_id = debts.id
+        GROUP BY debts.id
+        ORDER BY debts.updated_at DESC, debts.id DESC
+        """,
+    )
+    fun observeAll(): Flow<List<DebtRecord>>
+
+    @Query(
+        """
+        SELECT debts.id AS id,
+               debts.counterparty_id AS counterpartyId,
+               counterparties.name AS counterpartyName,
+               debts.account_id AS accountId,
+               accounts.name AS accountName,
+               debts.direction AS direction,
+               debts.principal_minor AS principalMinor,
+               COALESCE(SUM(debt_repayments.amount_minor), 0) AS repaidMinor,
+               debts.currency AS currency,
+               accounts.fraction_digits AS fractionDigits,
+               debts.opened_at AS openedAt,
+               debts.local_date AS localDate,
+               debts.due_date AS dueDate,
+               debts.note AS note,
+               debts.created_at AS createdAt,
+               debts.updated_at AS updatedAt
+        FROM debts
+        JOIN counterparties ON counterparties.id = debts.counterparty_id
+        JOIN accounts ON accounts.id = debts.account_id
+        LEFT JOIN debt_repayments ON debt_repayments.debt_id = debts.id
+        WHERE debts.id = :id
+        GROUP BY debts.id
+        """,
+    )
+    fun observeById(id: String): Flow<DebtRecord?>
+}
+
+data class TransferPairUsage(
+    val fromAccountId: String,
+    val toAccountId: String,
+    val transferCount: Long,
+    val lastOccurredAt: Long,
+)
+
+@Dao
+interface AccountBalanceDao {
+    @Query("SELECT * FROM account_balances ORDER BY account_id")
+    fun observeAll(): Flow<List<AccountBalance>>
+
+    @Query("SELECT * FROM account_balances WHERE account_id = :accountId")
+    fun observeByAccount(accountId: String): Flow<AccountBalance?>
+
+    @Query("SELECT * FROM account_balances ORDER BY account_id")
+    suspend fun getAll(): List<AccountBalance>
+
+    @Query("SELECT * FROM account_balances WHERE account_id = :accountId")
+    suspend fun getByAccount(accountId: String): AccountBalance?
+}
+
+data class ActivityRecord(
+    val id: String,
+    val kind: String,
+    val accountId: String,
+    val counterpartyAccountId: String?,
+    val accountName: String,
+    val counterpartyAccountName: String?,
+    val currency: String,
+    val fractionDigits: Int,
+    val amountMinor: Long,
+    val transactionType: String?,
+    val occurredAt: Long,
+    val localDate: String,
+    val description: String?,
+    val recurringRuleId: String?,
+    val categoryId: String?,
+    val categoryParentId: String?,
+    val categoryName: String?,
+    val categoryIconName: String?,
+    val categoryColorIndex: Int?,
+    val debtId: String?,
+    val debtDirection: String?,
+    val debtMovement: String?,
+    val externalCounterpartyName: String?,
+    val balanceBeforeMinor: Long?,
+    val balanceAfterMinor: Long?,
+)
+
+data class DashboardAggregateRecord(
+    val rowKind: String,
+    val month: String?,
+    val transactionType: String?,
+    val categoryId: String?,
+    val categoryName: String?,
+    val categoryIconName: String?,
+    val categoryColorIndex: Int?,
+    val amountMinor: Long,
+    val transactionCount: Int,
+)
+
+@Dao
+interface ActivityDao {
+    @Query(
+        """
+        SELECT * FROM (
+            SELECT transactions.id AS id,
+                   transactions.type AS kind,
+                   transactions.account_id AS accountId,
+                   NULL AS counterpartyAccountId,
+                   accounts.name AS accountName,
+                   NULL AS counterpartyAccountName,
+                   accounts.currency AS currency,
+                   accounts.fraction_digits AS fractionDigits,
+                   transactions.amount_minor AS amountMinor,
+                   transactions.type AS transactionType,
+                   transactions.occurred_at AS occurredAt,
+                   transactions.local_date AS localDate,
+                   transactions.description AS description,
+                   transactions.recurring_rule_id AS recurringRuleId,
+                   transactions.category_id AS categoryId,
+                   categories.parent_id AS categoryParentId,
+                   categories.name AS categoryName,
+                   categories.icon_name AS categoryIconName,
+                   categories.color_index AS categoryColorIndex,
+                   NULL AS debtId,
+                   NULL AS debtDirection,
+                   NULL AS debtMovement,
+                   NULL AS externalCounterpartyName,
+                   NULL AS balanceBeforeMinor,
+                   NULL AS balanceAfterMinor
+            FROM transactions
+            JOIN accounts ON accounts.id = transactions.account_id
+            LEFT JOIN categories ON categories.id = transactions.category_id
+            UNION ALL
+            SELECT transfers.id AS id,
+                   'TRANSFER' AS kind,
+                   transfers.from_account_id AS accountId,
+                   transfers.to_account_id AS counterpartyAccountId,
+                   source.name AS accountName,
+                   target.name AS counterpartyAccountName,
+                   source.currency AS currency,
+                   source.fraction_digits AS fractionDigits,
+                   transfers.amount_minor AS amountMinor,
+                   NULL AS transactionType,
+                   transfers.occurred_at AS occurredAt,
+                   transfers.local_date AS localDate,
+                   transfers.description AS description,
+                   NULL AS recurringRuleId,
+                   NULL AS categoryId,
+                   NULL AS categoryParentId,
+                   NULL AS categoryName,
+                   NULL AS categoryIconName,
+                   NULL AS categoryColorIndex,
+                   NULL AS debtId,
+                   NULL AS debtDirection,
+                   NULL AS debtMovement,
+                   NULL AS externalCounterpartyName,
+                   NULL AS balanceBeforeMinor,
+                   NULL AS balanceAfterMinor
+            FROM transfers
+            JOIN accounts AS source ON source.id = transfers.from_account_id
+            JOIN accounts AS target ON target.id = transfers.to_account_id
+            UNION ALL
+            SELECT balance_adjustments.id AS id,
+                   'ADJUSTMENT' AS kind,
+                   balance_adjustments.account_id AS accountId,
+                   NULL AS counterpartyAccountId,
+                   accounts.name AS accountName,
+                   NULL AS counterpartyAccountName,
+                   accounts.currency AS currency,
+                   accounts.fraction_digits AS fractionDigits,
+                   balance_adjustments.delta_minor AS amountMinor,
+                   NULL AS transactionType,
+                   balance_adjustments.occurred_at AS occurredAt,
+                   balance_adjustments.local_date AS localDate,
+                   NULL AS description,
+                   NULL AS recurringRuleId,
+                   NULL AS categoryId,
+                   NULL AS categoryParentId,
+                   NULL AS categoryName,
+                   NULL AS categoryIconName,
+                   NULL AS categoryColorIndex,
+                   NULL AS debtId,
+                   NULL AS debtDirection,
+                   NULL AS debtMovement,
+                   NULL AS externalCounterpartyName,
+                   balance_adjustments.balance_before_minor AS balanceBeforeMinor,
+                   balance_adjustments.balance_after_minor AS balanceAfterMinor
+            FROM balance_adjustments
+            JOIN accounts ON accounts.id = balance_adjustments.account_id
+        )
+        WHERE (:kind IS NULL OR kind = :kind)
+          AND (
+              :accountId IS NULL OR
+              accountId = :accountId OR
+              counterpartyAccountId = :accountId
+          )
+          AND (:currency IS NULL OR currency = :currency)
+          AND (:fromDate IS NULL OR localDate >= :fromDate)
+          AND (:toDate IS NULL OR localDate < :toDate)
+          AND (
+              :categoryId IS NULL OR
+              (:categoryId = '__uncategorized__' AND categoryId IS NULL) OR
+              categoryId = :categoryId OR
+              categoryParentId = :categoryId
+          )
+        ORDER BY occurredAt DESC, id DESC
+        """,
+    )
+    fun pagingSource(
+        kind: String?,
+        accountId: String?,
+        currency: String?,
+        categoryId: String?,
+        fromDate: String?,
+        toDate: String?,
+    ): PagingSource<Int, ActivityRecord>
+
+    @Query(
+        """
+        SELECT 'MONTH' AS rowKind,
+               substr(transactions.local_date, 1, 7) AS month,
+               transactions.type AS transactionType,
+               NULL AS categoryId,
+               NULL AS categoryName,
+               NULL AS categoryIconName,
+               NULL AS categoryColorIndex,
+               SUM(transactions.amount_minor) AS amountMinor,
+               COUNT(*) AS transactionCount
+        FROM transactions
+        JOIN accounts ON accounts.id = transactions.account_id
+        WHERE transactions.local_date >= :fromDate
+          AND transactions.local_date < :toDate
+          AND accounts.currency = :currency
+          AND (:accountId IS NULL OR accounts.id = :accountId)
+        GROUP BY substr(transactions.local_date, 1, 7), transactions.type
+        UNION ALL
+        SELECT 'CATEGORY' AS rowKind,
+               NULL AS month,
+               transactions.type AS transactionType,
+               COALESCE(parent.id, category.id) AS categoryId,
+               COALESCE(parent.name, category.name) AS categoryName,
+               COALESCE(parent.icon_name, category.icon_name) AS categoryIconName,
+               COALESCE(parent.color_index, category.color_index) AS categoryColorIndex,
+               SUM(transactions.amount_minor) AS amountMinor,
+               COUNT(*) AS transactionCount
+        FROM transactions
+        JOIN accounts ON accounts.id = transactions.account_id
+        LEFT JOIN categories AS category ON category.id = transactions.category_id
+        LEFT JOIN categories AS parent ON parent.id = category.parent_id
+        WHERE transactions.local_date >= :selectedFromDate
+          AND transactions.local_date < :selectedToDate
+          AND accounts.currency = :currency
+          AND (:accountId IS NULL OR accounts.id = :accountId)
+        GROUP BY transactions.type, COALESCE(parent.id, category.id)
+        UNION ALL
+        SELECT 'PREVIOUS' AS rowKind,
+               :previousMonth AS month,
+               transactions.type AS transactionType,
+               NULL AS categoryId,
+               NULL AS categoryName,
+               NULL AS categoryIconName,
+               NULL AS categoryColorIndex,
+               SUM(transactions.amount_minor) AS amountMinor,
+               COUNT(*) AS transactionCount
+        FROM transactions
+        JOIN accounts ON accounts.id = transactions.account_id
+        WHERE transactions.local_date >= :previousFromDate
+          AND transactions.local_date < :previousToDate
+          AND accounts.currency = :currency
+          AND (:accountId IS NULL OR accounts.id = :accountId)
+        GROUP BY transactions.type
+        """,
+    )
+    fun observeDashboardAggregates(
+        fromDate: String,
+        toDate: String,
+        selectedFromDate: String,
+        selectedToDate: String,
+        previousMonth: String,
+        previousFromDate: String,
+        previousToDate: String,
+        currency: String,
+        accountId: String?,
+    ): Flow<List<DashboardAggregateRecord>>
+}
+
+@Dao
+interface BudgetDao {
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insert(budget: BudgetEntity)
+
+    @Query("SELECT * FROM budgets ORDER BY currency, created_at, id")
+    fun observeAll(): Flow<List<BudgetEntity>>
+
+    @Query("SELECT * FROM budgets WHERE id = :id")
+    suspend fun getById(id: String): BudgetEntity?
+
+    @Query("SELECT * FROM budgets WHERE category_id = :categoryId ORDER BY currency, created_at, id")
+    suspend fun getForCategory(categoryId: String): List<BudgetEntity>
+
+    @Update
+    suspend fun update(budget: BudgetEntity)
+
+    @Query("DELETE FROM budgets WHERE category_id = :categoryId")
+    suspend fun deleteForCategory(categoryId: String)
+
+    @Query("DELETE FROM budgets WHERE id = :id")
+    suspend fun deleteById(id: String)
+
+    @Query("SELECT COUNT(*) FROM budgets")
+    suspend fun count(): Int
+
+    @Query(
+        """
+        SELECT COALESCE(parent.id, category.id) AS categoryId,
+               SUM(transactions.amount_minor) AS spentMinor
+        FROM transactions
+        JOIN accounts ON accounts.id = transactions.account_id
+        LEFT JOIN categories AS category ON category.id = transactions.category_id
+        LEFT JOIN categories AS parent ON parent.id = category.parent_id
+        WHERE transactions.type = 'EXPENSE'
+          AND transactions.local_date >= :fromDate
+          AND transactions.local_date < :toDate
+          AND accounts.currency = :currency
+        GROUP BY COALESCE(parent.id, category.id)
+        """,
+    )
+    fun observeSpendByCategory(
+        currency: String,
+        fromDate: String,
+        toDate: String,
+    ): Flow<List<BudgetSpendRecord>>
+}
+
+data class BudgetSpendRecord(
+    val categoryId: String?,
+    val spentMinor: Long,
+)
+
+@Dao
+interface LegacyImportDao {
+    @Insert(onConflict = OnConflictStrategy.REPLACE)
+    suspend fun upsert(record: LegacyImportEntity)
+
+    @Update
+    suspend fun update(record: LegacyImportEntity)
+
+    @Query("SELECT * FROM legacy_imports WHERE source = :source")
+    suspend fun get(source: String): LegacyImportEntity?
+}
+
+@Dao
+interface BackupDao {
+    @Query("SELECT * FROM accounts ORDER BY created_at, id")
+    suspend fun accounts(): List<AccountEntity>
+
+    @Query("SELECT * FROM budgets ORDER BY created_at, id")
+    suspend fun budgets(): List<BudgetEntity>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertBudgets(values: List<BudgetEntity>)
+
+    @Query("SELECT * FROM categories ORDER BY parent_id IS NOT NULL, created_at, id")
+    suspend fun categories(): List<CategoryEntity>
+
+    @Query("SELECT * FROM recurring_rules ORDER BY created_at, id")
+    suspend fun recurringRules(): List<RecurringRuleEntity>
+
+    @Query("SELECT * FROM transactions ORDER BY created_at, id")
+    suspend fun transactions(): List<TransactionEntity>
+
+    @Query("SELECT * FROM balance_adjustments ORDER BY created_at, id")
+    suspend fun balanceAdjustments(): List<BalanceAdjustmentEntity>
+
+    @Query("SELECT * FROM transfers ORDER BY created_at, id")
+    suspend fun transfers(): List<TransferEntity>
+
+    @Query("SELECT * FROM counterparties ORDER BY created_at, id")
+    suspend fun counterparties(): List<CounterpartyEntity>
+
+    @Query("SELECT * FROM debts ORDER BY created_at, id")
+    suspend fun debts(): List<DebtEntity>
+
+    @Query("SELECT * FROM debt_repayments ORDER BY created_at, id")
+    suspend fun debtRepayments(): List<DebtRepaymentEntity>
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertBalanceAdjustments(values: List<BalanceAdjustmentEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertCounterparties(values: List<CounterpartyEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertDebts(values: List<DebtEntity>)
+
+    @Insert(onConflict = OnConflictStrategy.ABORT)
+    suspend fun insertDebtRepayments(values: List<DebtRepaymentEntity>)
+
+    @Query("DELETE FROM debt_repayments")
+    suspend fun deleteDebtRepayments()
+
+    @Query("DELETE FROM debts")
+    suspend fun deleteDebts()
+
+    @Query("DELETE FROM transactions")
+    suspend fun deleteTransactions()
+
+    @Query("DELETE FROM transfers")
+    suspend fun deleteTransfers()
+
+    @Query("DELETE FROM balance_adjustments")
+    suspend fun deleteBalanceAdjustments()
+
+    @Query("DELETE FROM recurring_rules")
+    suspend fun deleteRecurringRules()
+
+    @Query("DELETE FROM budgets")
+    suspend fun deleteBudgets()
+
+    @Query("DELETE FROM categories")
+    suspend fun deleteCategories()
+
+    @Query("DELETE FROM counterparties")
+    suspend fun deleteCounterparties()
+
+    @Query("DELETE FROM accounts")
+    suspend fun deleteAccounts()
+}
