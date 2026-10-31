@@ -1,0 +1,6 @@
+<resources>
+    <string name="developer_options">开发者选项</string>
+    <string name="demo_mode">演示模式</string>
+    <string name="demo_mode_description">使用独立的示例数据。每次启动演示模式时都会重新生成。</string>
+    <string name="demo_mode_failed">无法切换演示模式。当前数据源未改变。</string>
+</resources>
